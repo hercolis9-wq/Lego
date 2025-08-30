@@ -14,33 +14,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Descompacta se houver ZIP no repo
+      # 1) Descompacta se houver ZIP na raiz (ex.: payload.zip, lego-*.zip, etc.)
       - name: Detect & unzip Android project
         run: |
           set -euxo pipefail
           mkdir -p workspace
-
-          # Tenta payload.zip primeiro; se não existir, pega o primeiro .zip encontrado
           ZIP_FILE=""
           if [ -f "payload.zip" ]; then
             ZIP_FILE="payload.zip"
           else
-            # pega o primeiro zip do diretório (ajuste se quiser algo específico)
             ZIP_FILE=$(ls -1 *.zip 2>/dev/null | head -n1 || true)
           fi
-
           if [ -n "${ZIP_FILE}" ]; then
             echo "ZIP encontrado: ${ZIP_FILE}"
             unzip -o "${ZIP_FILE}" -d workspace
           else
-            echo "Nenhum ZIP encontrado; copiando conteúdo do repo"
+            echo "Nenhum ZIP na raiz; copiando conteúdo do repo"
             rsync -a --exclude '.git' ./ workspace/
           fi
-
-          echo "Conteúdo de workspace/"
+          echo "Conteúdo inicial de workspace/"
           ls -la workspace || true
 
-      # Localiza a pasta que contém settings.gradle(.kts)
+      # 2) Acha a pasta com settings.gradle(.kts)
       - name: Locate Gradle project root
         id: findroot
         run: |
@@ -48,7 +43,7 @@ jobs:
           ROOT_CANDIDATE=$(grep -RIl --include="settings.gradle" --include="settings.gradle.kts" '^' workspace || true | head -n1 || true)
           if [ -z "${ROOT_CANDIDATE}" ]; then
             echo "❌ settings.gradle(.kts) não encontrado dentro de 'workspace/'."
-            echo "Dica: o ZIP precisa conter a raiz do projeto (com settings.gradle.kts e app/)."
+            echo "Dica: o ZIP precisa conter a raiz do projeto Android (com settings.gradle.kts + app/)."
             exit 1
           fi
           PROJECT_DIR=$(dirname "${ROOT_CANDIDATE}")
@@ -56,12 +51,12 @@ jobs:
           echo "Projeto detectado em: ${PROJECT_DIR}"
           ls -la "${PROJECT_DIR}"
 
+      # 3) JDK + SDK Android
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -71,19 +66,20 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           yes | sdkmanager --licenses
 
-      - name: Setup Gradle 8.7
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: 8.7
+      # 4) Instala o Gradle 8.7 localmente (sem wrapper)
+      - name: Install Gradle 8.7
+        run: |
+          set -euxo pipefail
+          curl -L -o gradle-8.7-bin.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle-8.7-bin.zip
+          echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
-      - name: Generate Gradle Wrapper
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle wrapper --gradle-version 8.7
-
+      # 5) Build (sem daemon, com stacktrace)
       - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: ./gradlew assembleDebug --no-daemon --stacktrace --info
+        run: |
+          gradle -p "${{ env.PROJECT_DIR }}" assembleDebug --no-daemon --stacktrace --info
 
+      # 6) Artifact
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
