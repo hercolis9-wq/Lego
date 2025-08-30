@@ -14,18 +14,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Locate project root
+      # Descompacta se houver ZIP no repo
+      - name: Detect & unzip Android project
+        run: |
+          set -euxo pipefail
+          mkdir -p workspace
+
+          # Tenta payload.zip primeiro; se não existir, pega o primeiro .zip encontrado
+          ZIP_FILE=""
+          if [ -f "payload.zip" ]; then
+            ZIP_FILE="payload.zip"
+          else
+            # pega o primeiro zip do diretório (ajuste se quiser algo específico)
+            ZIP_FILE=$(ls -1 *.zip 2>/dev/null | head -n1 || true)
+          fi
+
+          if [ -n "${ZIP_FILE}" ]; then
+            echo "ZIP encontrado: ${ZIP_FILE}"
+            unzip -o "${ZIP_FILE}" -d workspace
+          else
+            echo "Nenhum ZIP encontrado; copiando conteúdo do repo"
+            rsync -a --exclude '.git' ./ workspace/
+          fi
+
+          echo "Conteúdo de workspace/"
+          ls -la workspace || true
+
+      # Localiza a pasta que contém settings.gradle(.kts)
+      - name: Locate Gradle project root
         id: findroot
         run: |
           set -euxo pipefail
-          ROOT_CANDIDATE=$(grep -RIl --include="settings.gradle" --include="settings.gradle.kts" '^' . || true | head -n1 || true)
+          ROOT_CANDIDATE=$(grep -RIl --include="settings.gradle" --include="settings.gradle.kts" '^' workspace || true | head -n1 || true)
           if [ -z "${ROOT_CANDIDATE}" ]; then
-            echo "❌ settings.gradle(.kts) não encontrado."
+            echo "❌ settings.gradle(.kts) não encontrado dentro de 'workspace/'."
+            echo "Dica: o ZIP precisa conter a raiz do projeto (com settings.gradle.kts e app/)."
             exit 1
           fi
           PROJECT_DIR=$(dirname "${ROOT_CANDIDATE}")
           echo "PROJECT_DIR=${PROJECT_DIR}" >> $GITHUB_ENV
-          echo "Projeto: ${PROJECT_DIR}"
+          echo "Projeto detectado em: ${PROJECT_DIR}"
           ls -la "${PROJECT_DIR}"
 
       - name: Set up JDK 17
